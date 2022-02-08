@@ -1,6 +1,7 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const mongoose = require("mongoose");
+const findOrCreate = require('mongoose-findorcreate');
 
 const app = express();
 
@@ -17,9 +18,12 @@ const https = require('https');
 const { use } = require("express/lib/application");
 const res = require("express/lib/response");
 const { userInfo } = require("os");
+const { resourceLimits } = require("worker_threads");
+const { resolveSoa } = require("dns");
 
 const userTodo = new mongoose.Schema({
     id: Number,
+    userId: Number,
     title: String,
     completed: Boolean,
 });
@@ -38,6 +42,8 @@ const userSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model("user", userSchema);
+userSchema.plugin(findOrCreate);
+
 
 
 
@@ -57,10 +63,11 @@ Todos.find(function(err, userData) {
                 const userData = JSON.parse(data);
                 userData.forEach(function(elm) {
 
-                    delete elm.userId;
+                    // delete elm.userId;
 
                     const todo_user = new Todos({
                         id: elm.id,
+                        userId: elm.userId,
                         title: elm.title,
                         completed: elm.completed,
                     });
@@ -105,14 +112,29 @@ app.get("/todos", function(req, res) {
 
 // First save the userInfo + Todos of the user in database
 
-
-
 var todoList = new Array();
+
+function specificTodo(req_UserId) {
+    todoList.length = 0;
+
+    Todos.find(function(err, result) {
+        for (let i = 0; i < result.length; i++) {
+            if (result[i].userId == req_UserId) {
+                todoList.push(result[i]);
+            }
+        }
+        // console.log(todoList);
+    });
+}
+
+
+
+
 
 app.get("/user/:userId", function(req, res) {
 
-    const req_userId = req.params.userId;
-
+    var req_userId = req.params.userId;
+    specificTodo(req.params.userId);
 
     https.get('https://jsonplaceholder.typicode.com/users/' + req_userId, (resp) => {
         let data = '';
@@ -124,57 +146,32 @@ app.get("/user/:userId", function(req, res) {
 
         // The whole response has been received. Print out the result.
         resp.on('end', () => {
-            const userData = JSON.parse(data);
-            // console.log(userData);
+            const folksData = JSON.parse(data);
 
-            https.get('https://jsonplaceholder.typicode.com/todos', (resp) => {
-                let data = '';
-
-                // A chunk of data has been received.
-                resp.on('data', (chunk) => {
-                    data += chunk;
-                });
-
-                // The whole response has been received. Print out the result.
-                resp.on('end', () => {
-                    const usersInfo = JSON.parse(data);
-
-                    if (todoList.length === 0) {
-                        for (let i = 0; i < usersInfo.length; i++) {
-                            if (usersInfo[i].userId === req_userId) {
-                                // console.log(usersInfo[i]);
-                                todoList.push(usersInfo[i]);
-                            }
-                        }
-                    }
-                });
-
-            }).on("error", (err) => {
-                console.log("Error: " + err.message);
-            });
-
-
-            // console.log(userData);
-
-            User.find({ id: req_userId }, function(err, result) {
-                if (!err && result.length != 0) {
-                    res.send(result[0]);
-                    console.log("User found No need to save ");
-                } else if (!err && result.length > 0) {
+            User.findOne({ id: req_userId }, function(err, result) {
+                // console.log(result);
+                if (result == null) {
                     const user = new User({
-                        id: userData.id,
-                        name: userData.name,
-                        email: userData.email,
-                        phone: userData.phone,
-                        todos: todoList
+                        id: folksData.id,
+                        name: folksData.name,
+                        email: folksData.email,
+                        phone: folksData.phone,
+                        todos: todoList,
                     });
 
-                    user.save(function() {
-                        console.log("user is saved succefully");
-                        res.send(result[0]);
-                    });
+                    user.save(function(err, result) {
+                        if (err) {
+                            console.log(err);
+                        } else {
+                            console.log("Saving User " + req_userId);
+                            res.send(result);
+                        }
 
-                    // todoList.length = 0;
+                    });
+                } else {
+                    console.log("User is already saved in database, Hence sending the data to client");
+                    console.log("Result is not NULL");
+                    res.send(result);
                 }
             });
         });
@@ -184,7 +181,6 @@ app.get("/user/:userId", function(req, res) {
     });
 
 });
-
 
 app.listen(4000, function() {
     console.log("Server started successfully");
